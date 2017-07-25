@@ -1,0 +1,651 @@
+
+<html>
+
+<head>
+<title>home</title>
+<meta http-equiv="content-type" content="text/html; charset=ISO-8859-1">
+
+<script type="text/javascript" src="resources/glMatrix-0.9.5.min.js"></script>
+<script type="text/javascript" src="resources/webgl-utils.js"></script>
+
+<script id="shader-fs" type="x-shader/x-fragment">
+    precision mediump float;
+
+    varying vec2 vTextureCoord;
+    varying vec3 vLightWeighting;
+
+    uniform sampler2D uSampler;
+
+    void main(void) {
+        vec4 textureColor = texture2D(uSampler, vec2(vTextureCoord.s, vTextureCoord.t));
+        gl_FragColor = vec4(textureColor.rgb * vLightWeighting, textureColor.a);
+    }
+</script>
+
+<script id="shader-vs" type="x-shader/x-vertex">
+    attribute vec3 aVertexPosition;
+    attribute vec3 aVertexNormal;
+    attribute vec2 aTextureCoord;
+
+    uniform mat4 uMVMatrix;
+    uniform mat4 uPMatrix;
+    uniform mat3 uNMatrix;
+
+    uniform vec3 uAmbientColor;
+
+    uniform vec3 uLightingDirection;
+    uniform vec3 uDirectionalColor;
+
+    uniform bool uUseLighting;
+
+    varying vec2 vTextureCoord;
+    varying vec3 vLightWeighting;
+
+    void main(void) {
+        gl_Position = uPMatrix * uMVMatrix * vec4(aVertexPosition, 1.0);
+        vTextureCoord = aTextureCoord;
+
+        if (!uUseLighting) {
+            vLightWeighting = vec3(1.0, 1.0, 1.0);
+        } else {
+            vec3 transformedNormal = uNMatrix * aVertexNormal;
+            float directionalLightWeighting = max(dot(transformedNormal, uLightingDirection), 0.0);
+            vLightWeighting = uAmbientColor + uDirectionalColor * directionalLightWeighting;
+        }
+    }
+</script>
+
+
+<script type="text/javascript">
+
+    var gl;
+
+    var xRotFinal = 1;
+    var yRotFinal = 0;
+    var xRot = 1;
+    var yRot = 0;
+    
+    function initGL(canvas) {
+        try {
+            gl = canvas.getContext("experimental-webgl");
+            gl.viewportWidth = canvas.width;
+            gl.viewportHeight = canvas.height;
+        } catch (e) {
+        }
+        if (!gl) {
+            alert("Could not initialise WebGL, sorry :-(");
+        }
+    }
+
+
+    function getShader(gl, id) {
+    	
+        var shaderScript = document.getElementById(id);
+        if (!shaderScript) {
+            return null;
+        }
+
+        var str = "";
+        var k = shaderScript.firstChild;
+        while (k) {
+            if (k.nodeType == 3) {
+                str += k.textContent;
+            }
+            k = k.nextSibling;
+        }
+
+        var shader;
+        if (shaderScript.type == "x-shader/x-fragment") {
+            shader = gl.createShader(gl.FRAGMENT_SHADER);
+        } else if (shaderScript.type == "x-shader/x-vertex") {
+            shader = gl.createShader(gl.VERTEX_SHADER);
+        } else {
+            return null;
+        }
+ 
+        gl.shaderSource(shader, str);
+        gl.compileShader(shader);
+
+        if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+            alert(gl.getShaderInfoLog(shader));
+            return null;
+        }
+
+        return shader;
+    }
+
+
+    var shaderProgram;
+
+    function initShaders() {
+        var fragmentShader = getShader(gl, "shader-fs");
+        var vertexShader = getShader(gl, "shader-vs");
+
+        shaderProgram = gl.createProgram();
+        gl.attachShader(shaderProgram, vertexShader);
+        gl.attachShader(shaderProgram, fragmentShader);
+        gl.linkProgram(shaderProgram);
+
+        if (!gl.getProgramParameter(shaderProgram, gl.LINK_STATUS)) {
+            alert("Could not initialise shaders");
+        }
+
+        gl.useProgram(shaderProgram);
+
+        shaderProgram.vertexPositionAttribute = gl.getAttribLocation(shaderProgram, "aVertexPosition");
+        gl.enableVertexAttribArray(shaderProgram.vertexPositionAttribute);
+
+        shaderProgram.textureCoordAttribute = gl.getAttribLocation(shaderProgram, "aTextureCoord");
+        gl.enableVertexAttribArray(shaderProgram.textureCoordAttribute);
+
+        shaderProgram.vertexNormalAttribute = gl.getAttribLocation(shaderProgram, "aVertexNormal");
+        gl.enableVertexAttribArray(shaderProgram.vertexNormalAttribute);
+
+        shaderProgram.pMatrixUniform = gl.getUniformLocation(shaderProgram, "uPMatrix");
+        shaderProgram.mvMatrixUniform = gl.getUniformLocation(shaderProgram, "uMVMatrix");
+        shaderProgram.nMatrixUniform = gl.getUniformLocation(shaderProgram, "uNMatrix");
+        shaderProgram.samplerUniform = gl.getUniformLocation(shaderProgram, "uSampler");
+        shaderProgram.useLightingUniform = gl.getUniformLocation(shaderProgram, "uUseLighting");
+        shaderProgram.ambientColorUniform = gl.getUniformLocation(shaderProgram, "uAmbientColor");
+        shaderProgram.lightingDirectionUniform = gl.getUniformLocation(shaderProgram, "uLightingDirection");
+        shaderProgram.directionalColorUniform = gl.getUniformLocation(shaderProgram, "uDirectionalColor");
+    }
+
+
+    function handleLoadedTexture(texture) {
+
+        
+        
+        gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+        gl.bindTexture(gl.TEXTURE_2D, texture);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, texture.image);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_NEAREST);
+        gl.generateMipmap(gl.TEXTURE_2D);
+
+        gl.bindTexture(gl.TEXTURE_2D, null);
+    }
+
+
+    var earthTexture;
+
+    function initTexture() {
+
+        earthTexture = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, earthTexture);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE,
+              new Uint8Array([255, 0, 0, 255])); // red
+        
+        
+        
+        earthTexture.image = new Image();
+        
+        earthTexture.image.src = "resources/ear0xuu2.jpg";
+        
+        earthTexture.image.onload = function () {
+           gl.bindTexture(gl.TEXTURE_2D, earthTexture);
+           gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, earthTexture.image);
+
+           // then either generate mips if the image uses power-of-2 dimensions or 
+           // set the filtering correctly for non-power-of-2 images.
+           setupTextureFilteringAndMips(earthTexture.image.width, earthTexture.image.height);
+        }
+    
+    }
+
+    function isPowerOf2(value) {
+  return (value & (value - 1)) == 0;
+};
+    
+    
+    function setupTextureFilteringAndMips(width, height) {
+  if ( isPowerOf2(width) && isPowerOf2(height) ){
+    // the dimensions are power of 2 so generate mips and turn on 
+    // tri-linear filtering.
+    gl.generateMipmap(gl.TEXTURE_2D);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+  } else {
+    // at least one of the dimensions is not a power of 2 so set the filtering
+    // so WebGL will render it.
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  }
+    }
+    
+    
+    
+
+    var mvMatrix = mat4.create();
+    var mvMatrixStack = [];
+    var pMatrix = mat4.create();
+
+    function mvPushMatrix() {
+        var copy = mat4.create();
+        mat4.set(mvMatrix, copy);
+        mvMatrixStack.push(copy);
+    }
+
+    function mvPopMatrix() {
+        if (mvMatrixStack.length == 0) {
+            throw "Invalid popMatrix!";
+        }
+        mvMatrix = mvMatrixStack.pop();
+    }
+
+    function setMatrixUniforms() {
+        gl.uniformMatrix4fv(shaderProgram.pMatrixUniform, false, pMatrix);
+        gl.uniformMatrix4fv(shaderProgram.mvMatrixUniform, false, mvMatrix);
+
+        var normalMatrix = mat3.create();
+        mat4.toInverseMat3(mvMatrix, normalMatrix);
+        mat3.transpose(normalMatrix);
+        gl.uniformMatrix3fv(shaderProgram.nMatrixUniform, false, normalMatrix);
+    }
+
+
+    function degToRad(degrees) {
+        return degrees * Math.PI / 180;
+    }
+
+
+    var mouseDown = false;
+    var lastMouseX = null;
+    var lastMouseY = null;
+
+    var earthRotationMatrix = mat4.create();
+    mat4.identity(earthRotationMatrix);
+
+    function handleMouseDown(event) {
+        mouseDown = true;
+        lastMouseX = event.clientX;
+        lastMouseY = event.clientY;
+    	xRot = lastMouseX;
+    	yRot = lastMouseY;
+    }
+
+
+    function handleMouseUp(event) {
+        mouseDown = false;
+        
+        xRot = lastMouseX - xRot;
+        yRot = lastMouseY - yRot;
+        if(Math.abs(xRot) >= Math.abs(yRot) && xRot != 0){
+        	xRotFinal = xRot/Math.abs(xRot);
+        	yRotFinal = yRot/Math.abs(xRot);
+        }
+        else if( Math.abs(yRot) > Math.abs(xRot) && yRot !=0){
+        	xRotFinal = xRot/Math.abs(yRot);
+        	yRotFinal = yRot/Math.abs(yRot);
+        }
+        
+       
+    }
+
+
+    function handleMouseMove(event) {
+        if (!mouseDown) {
+            return;
+        }
+        var newX = event.clientX;
+        var newY = event.clientY;
+
+        var deltaX = newX - lastMouseX
+        var newRotationMatrix = mat4.create();
+        mat4.identity(newRotationMatrix);
+        mat4.rotate(newRotationMatrix, degToRad(deltaX / 10), [0, 1, 0]);
+
+        var deltaY = newY - lastMouseY;
+        mat4.rotate(newRotationMatrix, degToRad(deltaY / 10), [1, 0, 0]);
+
+        mat4.multiply(newRotationMatrix, earthRotationMatrix, earthRotationMatrix);
+
+        lastMouseX = newX
+        lastMouseY = newY;
+    }
+
+
+
+    var earthVertexPositionBuffer;
+    var earthVertexNormalBuffer;
+    var earthVertexTextureCoordBuffer;
+    var earthVertexIndexBuffer;
+
+    function initBuffers() {
+        var latitudeBands = 30;
+        var longitudeBands = 30;
+        var radius = 2;
+
+        var vertexPositionData = [];
+        var normalData = [];
+        var textureCoordData = [];
+        for (var latNumber=0; latNumber <= latitudeBands; latNumber++) {
+            var theta = latNumber * Math.PI / latitudeBands;
+            var sinTheta = Math.sin(theta);
+            var cosTheta = Math.cos(theta);
+
+            for (var longNumber=0; longNumber <= longitudeBands; longNumber++) {
+                var phi = longNumber * 2 * Math.PI / longitudeBands;
+                var sinPhi = Math.sin(phi);
+                var cosPhi = Math.cos(phi);
+
+                var x = cosPhi * sinTheta;
+                var y = cosTheta;
+                var z = sinPhi * sinTheta;
+                var u = 1 - (longNumber / longitudeBands);
+                var v = 1 - (latNumber / latitudeBands);
+
+                normalData.push(x);
+                normalData.push(y);
+                normalData.push(z);
+                textureCoordData.push(u);
+                textureCoordData.push(v);
+                vertexPositionData.push(radius * x);
+                vertexPositionData.push(radius * y);
+                vertexPositionData.push(radius * z);
+            }
+        }
+
+        var indexData = [];
+        for (var latNumber=0; latNumber < latitudeBands; latNumber++) {
+            for (var longNumber=0; longNumber < longitudeBands; longNumber++) {
+                var first = (latNumber * (longitudeBands + 1)) + longNumber;
+                var second = first + longitudeBands + 1;
+                indexData.push(first);
+                indexData.push(second);
+                indexData.push(first + 1);
+
+                indexData.push(second);
+                indexData.push(second + 1);
+                indexData.push(first + 1);
+            }
+        }
+
+        earthVertexNormalBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, earthVertexNormalBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(normalData), gl.STATIC_DRAW);
+        earthVertexNormalBuffer.itemSize = 3;
+        earthVertexNormalBuffer.numItems = normalData.length / 3;
+
+        earthVertexTextureCoordBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, earthVertexTextureCoordBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(textureCoordData), gl.STATIC_DRAW);
+        earthVertexTextureCoordBuffer.itemSize = 2;
+        earthVertexTextureCoordBuffer.numItems = textureCoordData.length / 2;
+
+        earthVertexPositionBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, earthVertexPositionBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertexPositionData), gl.STATIC_DRAW);
+        earthVertexPositionBuffer.itemSize = 3;
+        earthVertexPositionBuffer.numItems = vertexPositionData.length / 3;
+
+        earthVertexIndexBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, earthVertexIndexBuffer);
+        gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(indexData), gl.STATIC_DRAW);
+        earthVertexIndexBuffer.itemSize = 1;
+        earthVertexIndexBuffer.numItems = indexData.length;
+    }
+
+
+    function drawScene() {
+        gl.viewport(0, 0, gl.viewportWidth, gl.viewportHeight);
+        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+        mat4.perspective(45, gl.viewportWidth / gl.viewportHeight, 0.1, 100.0, pMatrix);
+
+        var lighting = document.getElementById("lighting").checked;
+        gl.uniform1i(shaderProgram.useLightingUniform, lighting);
+        if (lighting) {
+            gl.uniform3f(
+                shaderProgram.ambientColorUniform,
+                parseFloat(document.getElementById("ambientR").value),
+                parseFloat(document.getElementById("ambientG").value),
+                parseFloat(document.getElementById("ambientB").value)
+            );
+
+            var lightingDirection = [
+                parseFloat(document.getElementById("lightDirectionX").value),
+                parseFloat(document.getElementById("lightDirectionY").value),
+                parseFloat(document.getElementById("lightDirectionZ").value)
+            ];
+            var adjustedLD = vec3.create();
+            vec3.normalize(lightingDirection, adjustedLD);
+            vec3.scale(adjustedLD, -1);
+            gl.uniform3fv(shaderProgram.lightingDirectionUniform, adjustedLD);
+
+            gl.uniform3f(
+                shaderProgram.directionalColorUniform,
+                parseFloat(document.getElementById("directionalR").value),
+                parseFloat(document.getElementById("directionalG").value),
+                parseFloat(document.getElementById("directionalB").value)
+            );
+        }
+
+        mat4.identity(mvMatrix);
+
+    
+        mat4.translate(mvMatrix, [0, 0, -6]);
+
+        mat4.multiply(mvMatrix, earthRotationMatrix);
+
+        
+        
+        
+        
+        
+        var newRotationMatrix = mat4.create();
+        mat4.identity(newRotationMatrix);
+        console.log(xRotFinal +" , "+yRotFinal);
+        mat4.rotate(newRotationMatrix, degToRad(xRotFinal/10), [0, 1, 0]);
+        mat4.rotate(newRotationMatrix, degToRad(yRotFinal/10), [1, 0, 0]);
+        mat4.multiply(newRotationMatrix, earthRotationMatrix, earthRotationMatrix);
+        
+        
+        
+        
+        
+        
+        
+        
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, earthTexture);
+        gl.uniform1i(shaderProgram.samplerUniform, 0);
+
+        gl.bindBuffer(gl.ARRAY_BUFFER, earthVertexPositionBuffer);
+        gl.vertexAttribPointer(shaderProgram.vertexPositionAttribute, earthVertexPositionBuffer.itemSize, gl.FLOAT, false, 0, 0);
+
+        gl.bindBuffer(gl.ARRAY_BUFFER, earthVertexTextureCoordBuffer);
+        gl.vertexAttribPointer(shaderProgram.textureCoordAttribute, earthVertexTextureCoordBuffer.itemSize, gl.FLOAT, false, 0, 0);
+
+        gl.bindBuffer(gl.ARRAY_BUFFER, earthVertexNormalBuffer);
+        gl.vertexAttribPointer(shaderProgram.vertexNormalAttribute, earthVertexNormalBuffer.itemSize, gl.FLOAT, false, 0, 0);
+
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, earthVertexIndexBuffer);
+        setMatrixUniforms();
+        gl.drawElements(gl.TRIANGLES, earthVertexIndexBuffer.numItems, gl.UNSIGNED_SHORT, 0);
+    }
+
+
+    function tick() {
+        requestAnimFrame(tick);
+        drawScene();
+    }
+
+
+    function webGLStart() {
+        var canvas = document.getElementById("canvas");
+        initGL(canvas);
+        initShaders();
+        initBuffers();
+        initTexture();
+
+        gl.clearColor(0.0, 0.0, 0.0, 1.0);
+        gl.enable(gl.DEPTH_TEST);
+
+        canvas.onmousedown = handleMouseDown;
+        document.onmouseup = handleMouseUp;
+        document.onmousemove = handleMouseMove;
+
+        tick();
+    }
+
+    
+    var canvas;
+    
+    function resizeCanvas(){
+        if(canvas == null){
+            canvas = document.getElementById('canvas');
+            window.addEventListener('resize',resizeCanvas);
+        }
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+    
+    }
+    
+
+    
+    
+    
+
+window.addEventListener('load', 
+    
+    function swipedetect(){
+  
+    var touchsurface = document.getElementById('touch'),
+    swipedir,
+    startX,
+    startY,
+    distX,
+    distY,
+    threshold = 150, //required min distance traveled to be considered swipe
+    restraint = 100, // maximum distance allowed at the same time in perpendicular direction
+    allowedTime = 300, // maximum time allowed to travel that distance
+    elapsedTime,
+    startTime,
+    handleswipe = function(dX,dY){
+    
+        xRot = dX;
+        yRot = dY;
+        if(Math.abs(xRot) >= Math.abs(yRot) && xRot != 0){
+        	xRotFinal = xRot/Math.abs(xRot);
+        	yRotFinal = yRot/Math.abs(xRot);
+        }
+        else if( Math.abs(yRot) > Math.abs(xRot) && yRot !=0){
+        	xRotFinal = xRot/Math.abs(yRot);
+        	yRotFinal = yRot/Math.abs(yRot);
+        }
+		
+    
+    
+    }
+  
+    touchsurface.addEventListener('touchstart', function(e){
+        var touchobj = e.changedTouches[0]
+        swipedir = 'none'
+        dist = 0
+        startX = touchobj.pageX
+        startY = touchobj.pageY
+        startTime = new Date().getTime() // record time when finger first makes contact with surface
+        e.preventDefault()
+    }, false)
+  
+    touchsurface.addEventListener('touchmove', function(e){
+        e.preventDefault() // prevent scrolling when inside DIV
+    }, false)
+  
+    touchsurface.addEventListener('touchend', function(e){
+        var touchobj = e.changedTouches[0]
+        distX = touchobj.pageX - startX // get horizontal dist traveled by finger while in contact with surface
+        distY = touchobj.pageY - startY // get vertical dist traveled by finger while in contact with surface
+        
+        /*
+        elapsedTime = new Date().getTime() - startTime // get time elapsed
+        if (elapsedTime <= allowedTime){ // first condition for awipe met
+            if (Math.abs(distX) >= threshold && Math.abs(distY) <= restraint){ // 2nd condition for horizontal swipe met
+                swipedir = (distX < 0)? 'left' : 'right' // if dist traveled is negative, it indicates left swipe
+
+            }
+            else if (Math.abs(distY) >= threshold && Math.abs(distX) <= restraint){ // 2nd condition for vertical swipe met
+                swipedir = (distY < 0)? 'up' : 'down' // if dist traveled is negative, it indicates up swipe
+
+            }
+        }
+        */
+        
+        handleswipe(distX,distY);
+        e.preventDefault();
+    }, false)
+});
+  
+
+
+    </script>
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+
+</head>
+
+
+<body onload="resizeCanvas();webGLStart();">
+
+    <div id="touch">
+    <canvas id="canvas" style="border: none;" width="500" height="500"></canvas>
+    </div>
+    
+<div id="control"  style="display: none;">
+    <br/>
+
+    <input type="checkbox" id="lighting" checked /> Use lighting<br/>
+    Spin the earth by dragging it with the mouse.
+    <br/>
+
+    <h2>Directional light:</h2>
+
+    <table style="border: 0; padding: 10px;">
+        <tr>
+            <td><b>Direction:</b>
+            <td>X: <input type="text" id="lightDirectionX" value="-1.0" />
+            <td>Y: <input type="text" id="lightDirectionY" value="-1.0" />
+            <td>Z: <input type="text" id="lightDirectionZ" value="-1.0" />
+        </tr>
+        <tr>
+            <td><b>Colour:</b>
+            <td>R: <input type="text" id="directionalR" value="0.8" />
+            <td>G: <input type="text" id="directionalG" value="0.8" />
+            <td>B: <input type="text" id="directionalB" value="0.8" />
+        </tr>
+    </table>
+
+
+    <h2>Ambient light:</h2>
+
+    <table style="border: 0; padding: 10px;">
+        <tr>
+            <td><b>Colour:</b>
+            <td>R: <input type="text" id="ambientR" value="0.2" />
+            <td>G: <input type="text" id="ambientG" value="0.2" />
+            <td>B: <input type="text" id="ambientB" value="0.2" />
+        </tr>
+    </table>
+    <br/>
+</div>
+</body>
+
+</html>
